@@ -30,13 +30,13 @@ async function checkSubscription(ctx) {
 
 bot.start((ctx) => {
   userState.delete(ctx.from.id);
-  ctx.reply('Введите код для просмотра видео');
+  ctx.reply('Введите код для просмотра фильма или сериала');
 });
 
 bot.command('movie', (ctx) => {
   userState.delete(ctx.from.id);
   ctx.reply(
-    'Не знаешь что посмотреть? Можешь выбрать видео для просмотра через наш YouTube.',
+    'Не знаешь что посмотреть? Можешь выбрать фильм или сериал для просмотра через наш YouTube.',
     Markup.inlineKeyboard([
       Markup.button.url('Moodie MC', 'https://www.youtube.com/@moodie_mc')
     ])
@@ -145,7 +145,7 @@ bot.on('callback_query', async (ctx) => {
     } else {
       await ctx.reply("Для просмотра нужно подписаться на наш канал:", 
         Markup.inlineKeyboard([
-          [Markup.button.url("🚀 Подписаться на Moodie MC", CHANNEL_URL)],
+          [Markup.button.url("Подписаться на Moodie MC", CHANNEL_URL)],
           [Markup.button.callback("✅ Я подписался", action)]
         ])
       );
