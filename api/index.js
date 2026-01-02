@@ -3,8 +3,12 @@ const { Telegraf, Markup } = require('telegraf');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const ADMIN_ID = 1949612933;
-const CHANNEL_ID = '@moodie_mc'; // Юзернейм вашего канала
+const CHANNEL_ID = '@moodie_mc';
 const CHANNEL_URL = 'https://t.me/moodie_mc';
+
+// Хранилище временных состояний (кто сейчас в режиме задания вопроса)
+// На Vercel это работает в пределах одного запуска, для простых задач достаточно
+const userState = new Map();
 
 const videoDatabase = {
   "91_1": "BAACAgIAAxkBAAMPaVfqSQfXGqzbcOu65RLso0I6FPQAAn2LAALoFcFKOz5ZXfx4j3A4BA", 
@@ -13,24 +17,24 @@ const videoDatabase = {
   "91_4": "BAACAgIAAxkBAAMWaVfyrQgmWcWZeLiyJgzW_5bYDZYAAv-LAALoFcFKFW6UwKj23kU4BA"
 };
 
-// Проверка подписки
 async function checkSubscription(ctx) {
   try {
     const member = await ctx.telegram.getChatMember(CHANNEL_ID, ctx.from.id);
     return ['member', 'administrator', 'creator'].includes(member.status);
   } catch (e) {
-    console.error("Ошибка проверки подписки:", e);
     return false;
   }
 }
 
-// --- КОМАНДЫ ---
+// --- 1. КОМАНДЫ (САМЫЙ ВЫСОКИЙ ПРИОРИТЕТ) ---
 
 bot.start((ctx) => {
+  userState.delete(ctx.from.id);
   ctx.reply('Введите код для просмотра видео');
 });
 
 bot.command('movie', (ctx) => {
+  userState.delete(ctx.from.id);
   ctx.reply(
     'Не знаешь что посмотреть? Можешь выбрать видео для просмотра через наш YouTube.',
     Markup.inlineKeyboard([
@@ -40,26 +44,30 @@ bot.command('movie', (ctx) => {
 });
 
 bot.command('question', (ctx) => {
+  // Включаем режим вопроса для этого пользователя
+  userState.set(ctx.from.id, 'awaiting_question');
   ctx.reply('Какой вопрос хочешь задать?');
 });
 
+// --- 2. ОБРАБОТКА ВИДЕО (ДЛЯ АДМИНА) ---
 bot.on('video', async (ctx) => {
   if (ctx.from.id === ADMIN_ID) {
     return ctx.reply(`✅ Код для базы:\n\n"${ctx.message.video.file_id}"`);
   }
 });
 
-// --- ЕДИНЫЙ ОБРАБОТЧИК ТЕКСТА ---
+// --- 3. ОБРАБОТКА ТЕКСТА ---
 
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   const userId = ctx.from.id;
 
-  // 1. Если пишет админ и это ответ (REPLY) на вопрос пользователя
+  // А) Если пишет АДМИН в режиме ответа (Reply)
   if (userId === ADMIN_ID && ctx.message.reply_to_message) {
     const replyMessage = ctx.message.reply_to_message;
     const originalText = replyMessage.text || replyMessage.caption || "";
-    const match = originalText.match(/ID: `(\d+)`/);
+    // Ищем ID в тексте сообщения, на которое отвечаем
+    const match = originalText.match(/ID:\s*(\d+)/i);
 
     if (match) {
       const targetUserId = match[1];
@@ -67,13 +75,14 @@ bot.on('text', async (ctx) => {
         await ctx.telegram.sendMessage(targetUserId, `✉️ **Ответ от админа:**\n\n${text}`, { parse_mode: 'Markdown' });
         return ctx.reply('✅ Ответ отправлен пользователю!');
       } catch (e) {
-        return ctx.reply('❌ Не удалось отправить ответ. Возможно, пользователь заблокировал бота.');
+        return ctx.reply('❌ Ошибка: пользователь заблокировал бота или ID не найден.');
       }
     }
   }
 
-  // 2. Проверка кодов видео
+  // Б) Проверка кодов видео
   if (text === "91") {
+    userState.delete(userId);
     return ctx.replyWithVideo(videoDatabase["91_1"], {
       caption: "🍿 Серия 1",
       ...Markup.inlineKeyboard([
@@ -82,89 +91,62 @@ bot.on('text', async (ctx) => {
     });
   }
 
-  // 3. Если это не код, не команда и пишет НЕ админ — значит это вопрос
-  if (userId !== ADMIN_ID && !text.startsWith('/')) {
+  // В) Если пользователь в режиме вопроса (после /question)
+  if (userState.get(userId) === 'awaiting_question') {
+    userState.delete(userId); // Выключаем режим вопроса после получения
     await ctx.telegram.sendMessage(
       ADMIN_ID,
-      `📩 **Новый вопрос.**\nОт: [${ctx.from.first_name}](tg://user?id=${userId})\nID: \`${userId}\`\n\nТекст: ${text}`,
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('Ответить', `reply_to_${userId}`)]
-        ])
-      }
+      `📩 **Новый вопрос.**\nОт: ${ctx.from.first_name}\nID: ${userId}\n\nТекст: ${text}`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('Ответить', `reply_to_${userId}`)]
+      ])
     );
     return ctx.reply('Вопрос принят. Скоро модераторы ответят на него.');
   }
-  
-  // Если админ просто пишет текст (не как ответ)
-  if (userId === ADMIN_ID && !text.startsWith('/')) {
-    ctx.reply('Чтобы ответить пользователю, используйте функцию "Reply" (Ответить) на сообщение с его вопросом.');
+
+  // Г) Если это не код, не админ и не режим вопроса
+  if (userId !== ADMIN_ID) {
+    return ctx.reply('❌ Неверный код или формат.');
   }
 });
 
-// --- ОБРАБОТКА КНОПОК (CALLBACK) ---
+// --- 4. CALLBACK_QUERY (КНОПКИ) ---
 
 bot.on('callback_query', async (ctx) => {
   const action = ctx.callbackQuery.data;
 
-  // Кнопка помощи для админа
   if (action.startsWith('reply_to_')) {
     if (ctx.from.id === ADMIN_ID) {
-      await ctx.reply('Просто напишите ответное сообщение, используя функцию "Reply" (Ответить) на сообщение с вопросом.');
+      await ctx.reply('Чтобы ответить, используйте функцию "Reply" (Ответить) на сообщение выше.');
     }
     return ctx.answerCbQuery();
   }
 
   const isSubscribed = await checkSubscription(ctx);
 
-  // Логика переходов по сериям
-  if (action === "check_91_2") {
+  // Группировка логики серий
+  const seriesData = {
+    "check_91_2": { id: "91_2", next: "check_91_3", cap: "🍿 Серия 2", btn: "Перейти к 3 серии" },
+    "check_91_3": { id: "91_3", next: "check_91_4", cap: "🍿 Серия 3", btn: "Перейти к 4 серии" },
+    "check_91_4": { id: "91_4", next: null, cap: "🍿 Серия 4 (Финал)", btn: null }
+  };
+
+  const currentSeries = seriesData[action];
+  if (currentSeries) {
     if (isSubscribed) {
-      await ctx.replyWithVideo(videoDatabase["91_2"], {
-        caption: "🍿 Серия 2",
-        ...Markup.inlineKeyboard([
-          Markup.button.callback("Перейти к 3 серии", "check_91_3")
-        ])
+      const keyboard = currentSeries.next 
+        ? Markup.inlineKeyboard([Markup.button.callback(currentSeries.btn, currentSeries.next)])
+        : undefined;
+      
+      await ctx.replyWithVideo(videoDatabase[currentSeries.id], {
+        caption: currentSeries.cap,
+        ...keyboard
       });
     } else {
-      await ctx.reply("Для просмотра 2-й и следующих серий нужно подписаться на наш канал:", 
+      await ctx.reply("Для просмотра нужно подписаться на наш канал:", 
         Markup.inlineKeyboard([
           [Markup.button.url("🚀 Подписаться на Moodie MC", CHANNEL_URL)],
-          [Markup.button.callback("✅ Я подписался, смотреть 2 серию", "check_91_2")]
-        ])
-      );
-    }
-  }
-
-  if (action === "check_91_3") {
-    if (isSubscribed) {
-      await ctx.replyWithVideo(videoDatabase["91_3"], {
-        caption: "🍿 Серия 3",
-        ...Markup.inlineKeyboard([
-          Markup.button.callback("Перейти к 4 серии", "check_91_4")
-        ])
-      });
-    } else {
-      await ctx.reply("Не удалось проверить подписку. Подпишись, чтобы смотреть дальше.", 
-        Markup.inlineKeyboard([
-          [Markup.button.url("Подписаться", CHANNEL_URL)],
-          [Markup.button.callback("🔄Проверить и смотреть", "check_91_3")]
-        ])
-      );
-    }
-  }
-
-  if (action === "check_91_4") {
-    if (isSubscribed) {
-      await ctx.replyWithVideo(videoDatabase["91_4"], {
-        caption: "🍿 Серия 4 (Финал)"
-      });
-    } else {
-      await ctx.reply("Подписка обязательна для финала!", 
-        Markup.inlineKeyboard([
-          [Markup.button.url("Подписаться", CHANNEL_URL)],
-          [Markup.button.callback("🔄 Проверить и смотреть", "check_91_4")]
+          [Markup.button.callback("✅ Я подписался", action)]
         ])
       );
     }
@@ -174,14 +156,10 @@ bot.on('callback_query', async (ctx) => {
 });
 
 module.exports = async (req, res) => {
-  if (req.method === 'POST') {
-    try {
-      await bot.handleUpdate(req.body);
-      res.status(200).send('OK');
-    } catch (err) {
-      res.status(500).send('Error');
-    }
-  } else {
-    res.status(200).send('Bot is running');
+  try {
+    await bot.handleUpdate(req.body);
+    res.status(200).send('OK');
+  } catch (err) {
+    res.status(200).send('OK'); // Vercel не любит 500 ошибки от ботов
   }
 };
