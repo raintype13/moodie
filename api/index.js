@@ -5,6 +5,8 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = 1949612933;
 const CHANNEL_ID = '@moodie_mc'; // Юзернейм вашего канала
 const CHANNEL_URL = 'https://t.me/moodie_mc';
+const setupExtraCommands = require('../commands/extra');
+setupExtraCommands(bot, ADMIN_ID);
 
 const videoDatabase = {
   "91_1": "BAACAgIAAxkBAAMPaVfqSQfXGqzbcOu65RLso0I6FPQAAn2LAALoFcFKOz5ZXfx4j3A4BA", 
