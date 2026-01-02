@@ -5,8 +5,6 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = 1949612933;
 const CHANNEL_ID = '@moodie_mc'; // Юзернейм вашего канала
 const CHANNEL_URL = 'https://t.me/moodie_mc';
-const setupExtraCommands = require('../commands/extra');
-setupExtraCommands(bot, ADMIN_ID);
 
 const videoDatabase = {
   "91_1": "BAACAgIAAxkBAAMPaVfqSQfXGqzbcOu65RLso0I6FPQAAn2LAALoFcFKOz5ZXfx4j3A4BA", 
@@ -19,7 +17,6 @@ const videoDatabase = {
 async function checkSubscription(ctx) {
   try {
     const member = await ctx.telegram.getChatMember(CHANNEL_ID, ctx.from.id);
-    // Статусы, которые означают, что человек подписан
     return ['member', 'administrator', 'creator'].includes(member.status);
   } catch (e) {
     console.error("Ошибка проверки подписки:", e);
@@ -27,38 +24,101 @@ async function checkSubscription(ctx) {
   }
 }
 
+// --- КОМАНДЫ ---
+
+bot.start((ctx) => {
+  ctx.reply('Введите код для просмотра видео');
+});
+
+bot.command('movie', (ctx) => {
+  ctx.reply(
+    'Не знаешь что посмотреть? Можешь выбрать видео для просмотра через наш YouTube.',
+    Markup.inlineKeyboard([
+      Markup.button.url('Moodie MC', 'https://www.youtube.com/@moodie_mc')
+    ])
+  );
+});
+
+bot.command('question', (ctx) => {
+  ctx.reply('Какой вопрос хочешь задать?');
+});
+
 bot.on('video', async (ctx) => {
   if (ctx.from.id === ADMIN_ID) {
     return ctx.reply(`✅ Код для базы:\n\n"${ctx.message.video.file_id}"`);
   }
 });
 
-bot.start((ctx) => {
-  ctx.reply('Введите код для просмотра фильма');
-});
+// --- ЕДИНЫЙ ОБРАБОТЧИК ТЕКСТА ---
 
 bot.on('text', async (ctx) => {
-  const userCode = ctx.message.text.trim();
+  const text = ctx.message.text.trim();
+  const userId = ctx.from.id;
 
-  if (userCode === "91") {
-    // 1-я серия всегда доступна сразу
-    await ctx.replyWithVideo(videoDatabase["91_1"], {
+  // 1. Если пишет админ и это ответ (REPLY) на вопрос пользователя
+  if (userId === ADMIN_ID && ctx.message.reply_to_message) {
+    const replyMessage = ctx.message.reply_to_message;
+    const originalText = replyMessage.text || replyMessage.caption || "";
+    const match = originalText.match(/ID: `(\d+)`/);
+
+    if (match) {
+      const targetUserId = match[1];
+      try {
+        await ctx.telegram.sendMessage(targetUserId, `✉️ **Ответ от админа:**\n\n${text}`, { parse_mode: 'Markdown' });
+        return ctx.reply('✅ Ответ отправлен пользователю!');
+      } catch (e) {
+        return ctx.reply('❌ Не удалось отправить ответ. Возможно, пользователь заблокировал бота.');
+      }
+    }
+  }
+
+  // 2. Проверка кодов видео
+  if (text === "91") {
+    return ctx.replyWithVideo(videoDatabase["91_1"], {
       caption: "🍿 Серия 1",
       ...Markup.inlineKeyboard([
         Markup.button.callback("Перейти ко 2 серии", "check_91_2")
       ])
     });
-  } else {
-    ctx.reply('❌ Неверный код или формат.');
+  }
+
+  // 3. Если это не код, не команда и пишет НЕ админ — значит это вопрос
+  if (userId !== ADMIN_ID && !text.startsWith('/')) {
+    await ctx.telegram.sendMessage(
+      ADMIN_ID,
+      `📩 **Новый вопрос.**\nОт: [${ctx.from.first_name}](tg://user?id=${userId})\nID: \`${userId}\`\n\nТекст: ${text}`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('Ответить', `reply_to_${userId}`)]
+        ])
+      }
+    );
+    return ctx.reply('Вопрос принят. Скоро модераторы ответят на него.');
+  }
+  
+  // Если админ просто пишет текст (не как ответ)
+  if (userId === ADMIN_ID && !text.startsWith('/')) {
+    ctx.reply('Чтобы ответить пользователю, используйте функцию "Reply" (Ответить) на сообщение с его вопросом.');
   }
 });
 
-// Обработка кнопок
+// --- ОБРАБОТКА КНОПОК (CALLBACK) ---
+
 bot.on('callback_query', async (ctx) => {
   const action = ctx.callbackQuery.data;
+
+  // Кнопка помощи для админа
+  if (action.startsWith('reply_to_')) {
+    if (ctx.from.id === ADMIN_ID) {
+      await ctx.reply('Просто напишите ответное сообщение, используя функцию "Reply" (Ответить) на сообщение с вопросом.');
+    }
+    return ctx.answerCbQuery();
+  }
+
   const isSubscribed = await checkSubscription(ctx);
 
-  // Логика для 2-й серии
+  // Логика переходов по сериям
   if (action === "check_91_2") {
     if (isSubscribed) {
       await ctx.replyWithVideo(videoDatabase["91_2"], {
@@ -77,7 +137,6 @@ bot.on('callback_query', async (ctx) => {
     }
   }
 
-  // Логика для 3-й серии
   if (action === "check_91_3") {
     if (isSubscribed) {
       await ctx.replyWithVideo(videoDatabase["91_3"], {
@@ -96,7 +155,6 @@ bot.on('callback_query', async (ctx) => {
     }
   }
 
-  // Логика для 4-й серии
   if (action === "check_91_4") {
     if (isSubscribed) {
       await ctx.replyWithVideo(videoDatabase["91_4"], {
