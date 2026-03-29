@@ -14,7 +14,8 @@ const videoDatabase = {
   "91_1": "BAACAgIAAxkBAAMPaVfqSQfXGqzbcOu65RLso0I6FPQAAn2LAALoFcFKOz5ZXfx4j3A4BA", 
   "91_2": "BAACAgIAAxkBAAMSaVfv4zY002eSZQI-vtdgJZpWlP4AAtCLAALoFcFKffgaa2M3A_84BA",
   "91_3": "BAACAgIAAxkBAAMUaVfxPmwEIIys0pyjpsTSu_evD6oAAueLAALoFcFK9EcKn_n3HkQ4BA",
-  "91_4": "BAACAgIAAxkBAAMWaVfyrQgmWcWZeLiyJgzW_5bYDZYAAv-LAALoFcFKFW6UwKj23kU4BA"
+  "91_4": "BAACAgIAAxkBAAMWaVfyrQgmWcWZeLiyJgzW_5bYDZYAAv-LAALoFcFKFW6UwKj23kU4BA",
+  "82": "BAACAgIAAxkBAAP-acjgtv1kcBKy9aNj4ekbE1jLrOAAAr-JAAJH6clIEaAu2y179dY6BA"
 };
 
 async function checkSubscription(ctx) {
@@ -88,6 +89,14 @@ bot.on('text', async (ctx) => {
       ...Markup.inlineKeyboard([
         Markup.button.callback("Перейти ко 2 серии", "check_91_2")
       ])
+    });
+  }
+
+  // Код 82 без подписки
+  if (text === "82") {
+    userState.delete(userId);
+    return ctx.replyWithVideo(videoDatabase["82"], {
+      caption: "СНЫ — это НЕ ТО, ЧТО вы ДУМАЕТЕ!"
     });
   }
 
